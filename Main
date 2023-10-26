@@ -1,0 +1,162 @@
+import numpy as np
+from scipy import stats
+import tabulate
+
+def simulate_zero_logic(hypothesis, obs_position):
+  """Simulates the outcome of the given zero-order logic hypothesis at the specified observation position."""
+
+  def simulate_output(variable):
+    """Simulates the output of a single variable."""
+    if isinstance(variable['distribution'], dict):
+      # Use user-defined probability distributions if provided
+      dist = stats.get_stats_function(variable['distribution']['type'])(variable['distribution']['params'])
+      x = np.linspace(-np.inf, np.inf, 10000)
+      y = dist.pdf(x) * variable['distribution']['scale']
+      return np.random.choice(x, p=y)
+    else:
+      # Otherwise, assume uniform distribution within valid range
+      low, high = variable['range']
+      return np.random.uniform(low, high)
+
+  # Generate simulated outputs for all variables
+  predictions = np.vectorize(simulate_output)(hypothesis['variables'])
+
+  # Determine the predicted outputs that are closest to the observation position
+  pred_positions = [predictions[-1]]
+  for prev_pred in reversed(predictions[:-1]):
+    for shift in [-shift_tolerance, 0, shift_tolerance]:
+      pos = round(prev_pred + shift)
+      if pos == obs_position or abs(pos - obs_position) <= shift_tolerance:
+        pred_positions.insert(0, pos)
+        break
+
+  # Add noise to the simulated outputs
+  pred_values = []
+  for pos in pred_positions:
+    scale = variances[hypothesis['index']]['std']
+    loc = means[hypothesis['index']]['mean']
+    skew = variances[hypothesis['index']]['skewness']
+    mu = loc*(1+skew**2)**0.5
+    sigma = ((loc**2*skew**2)/mu + scale**2)**0.5
+    x = np.random.normal(mu, sigma)
+    if x < 0:
+      x = -x
+    pred_values.append(round(x, ndigits=3))
+
+  return {"predicted": " ".join(map(str, pred_values)), "predicted_positions": ", ".join(map(str, pred_positions))}
+
+def calculate_likelihood(hypothesis, observations):
+  """Calculates the likelihood of a hypothesis given the observations.
+
+  Args:
+    hypothesis: A hypothesis dictionary.
+    observations: A dictionary of observations.
+
+  Returns:
+    The likelihood of the hypothesis given the observations.
+  """
+
+  # Get the predicted outputs for the given hypothesis.
+  predicted_outputs = simulate_zero_logic(hypothesis, observations["X"])
+
+  # Compare the predicted outputs to the actual observations.
+  log_likelihood = 0
+  for i in range(len(predicted_outputs)):
+    log_likelihood += stats.norm.logpdf(observations["Y"][i], predicted_outputs[i])
+
+  # Return the log-likelihood of the hypothesis given the observations.
+  return log_likelihood
+
+def monte_carlo_abductive_reasoning(observations, num_trials):
+  """Performs Monte Carlo abductive reasoning using zero-order logic."""
+
+  hypotheses = load_data('hypotheses')
+  scores = np.array([calculate_likelihood(h, observations) for h in hypotheses])
+
+  # Calculate weighted average of scores using NumPy vectorized function
+  weights = scores / np.sum(scores)
+  top_scoring_hypotheses = list(hypotheses[np.argsort(-scores)[:num_trials]])
+
+  return top_scoring_hypotheses
+
+def load_data(filename):
+  """Load data from a JSON file.""" def read_json():
+    """Helper function to parse a single line from the input JSON file.""" yield json.loads(line)
+  with open(filename) as f:
+    for line in f:
+      yield next(read_json(), None)
+  hypotheses = {h["name"]: h for h in next(read_json())['hypotheses']}
+  resolutions = {h["name"]: float(r["resolution"]) for r in next(read_json())['resolutions']}
+  means = {}
+variances = {}
+for h, r in zip(hypotheses.keys(), resolutions.keys()):
+  for index, (v, d) in enumerate(next(read_json())['variances']):
+    if 'std' not in d:
+      raise ValueError("Missing standard deviation parameter for hypothesis %s and variable %s." % (h, v['name']))
+    std = float(d['std'])
+    if 'skewness' not in d:
+      skewness = 0
+    else:
+      skewness = float(d['skewness'])
+    mean = means[h][index]
+    variance = std ** 2
+    if skewness != 0:
+      kurtosis = (7 * skewness ** 4 + 8 * variance ** 2) ** 0.5
+      scale = math.sqrt(math.pi * kurtosis / (6 * math.sinh(kurtosis))) * math.exp(skewness ** 2 / 2)
+      loc = mean * (1 + skewness ** 2) ** 0.5
+      lambda_ = (skewness ** 2 * math.pow(loc, 2)) / (scale * math.cosh(kurtosis))
+      shape = (kurtosis / 2) * (math.tanh(kurtosis) / math.cosh(kurtosis)) + 3
+      variances[h] = {'mean': mean, 'variance': variance, 'std': std, 'skewness': skewness, 'shape': shape, 'location': lambda_, 'scale': scale}
+    else:
+      variances[h] = {'mean': mean, 'variance': variance, 'std': std}
+
+# Later in the script when performing Monte Carlo simulation...
+pred_output = simulate_monte_carlo(hypothesis, obs_position)
+if 'skewness' in variances[hypothesis['index']].keys():
+  scale = variances[hypothesis['index']]['scale']
+  loc = variances[hypothesis['index']]['location']
+  mu = loc*(1+variances[hypothesis['index']]['skewness']**2)**0.5
+  sigma = ((loc**2*variances[hypothesis['index']]['skewness']**2)/mu + variances[hypothesis['index']]['std']**2)**0.5
+  x = np.random.skewnorm(sigma, loc)
+else:
+  x = np.random.normal(variances[hypothesis['index']]['mean'], variances[hypothesis['index']]['std'])
+
+def generate_report(top_scoring_hypotheses, observations):
+  """Generates a report of the results of Monte Carlo abductive reasoning.
+
+  Args:
+    top_scoring_hypotheses: A list of the top-scoring hypotheses.
+    observations: A dictionary of observations.
+
+  Returns:
+    A string containing the report.
+  """
+
+  report = "Monte Carlo Abductive Reasoning Report\n"
+
+  # Format the data for easier reading
+  hypo_data = []
+  for i, hypo in enumerate(top_scoring_hypotheses):
+    prediction = simulate_monte_carlo(hypo, observations)
+    hypo_data.append((i+1, hypo["name"], hypo["likelihood"], round(prediction["probability"], 2), prediction["minimum"], prediction["maximum"]))
+
+  # Sort the hypo_data based on the likelihood score
+  sorted_hypo_data = sorted(hypo_data, key=lambda tup: tup[2], reverse=True)
+
+  # Print out the top-scoring hypotheses and their corresponding predictions
+  for idx, (num, name, likeli, prob, minn, maxx) in enumerate(sorted_hypo_data):
+    report += f"Top Hypothesis #{idx+1} ({num})\n"
+    report += f"Name: {name}\n"
+    report += f"Likelihood Score: {likeli}\n"
+    report += f"Predicted Probability Range: [{round(minn, 2)}, {round(maxx, 2)}]\n"
+    report += f"Generated Predictions Based on Observation Data:\n"
+    for j in range(len(observations)):
+      pred = simulate_monte_carlo(hypo, observations)[j]
+      report += f"  Observation {j+1}: predicted probability of occurrence: {round(pred['probability'], 2)}\n"
+
+  # Add the observations to the report
+  report += "Observations:\n"
+  for key, value in observations.items():
+    report += f"  {key}: {value}\n"
+
+  return report
