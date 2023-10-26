@@ -1,0 +1,114 @@
+In this modified version of the code provided earlier, I have added support for skewed normal distributions by including additional calculations for generating random numbers from these distributions using the skewnormal package in Python. The changes are as follows:
+
+Firstly, we calculate the skewness and kurtosis values for each hypothesis that uses a normal distribution with non-zero skewness or kurtosis. These values are used later in the Monte Carlo simulations. Here is the updated `calculate_distribution` function:
+
+```python
+from scipy.stats import skew, kurtosis
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.mixture import GaussianMixture
+from sklearn.model_selection import train_test_split
+from scipy.optimize import minimize
+from scipy.special import erfcinv
+from statsmodels.stats.multivariate import shrinkage
+from scipy.linalg import cholesky
+from math import factorial, sinh, cosh, tanh
+import skewnorm
+
+# Define helper functions
+
+def get_sample_size():
+    n = int(input("Enter sample size: "))
+    while not isinstance(n, int) or n <= 0:
+        print("Invalid input. Please enter an integer greater than zero.")
+        n = int(input("Enter sample size: "))
+    return n
+
+
+def plot_histogram(df, label="Histogram"):
+    fig, ax = plt.subplots()
+    sns.histplot(df, color='darkblue', alpha=0.9)
+    ax.set(title="Distribution", xlabel="Value")
+    if len(df) > 1000:
+        plt.xticks(rotation=45)
+    plt.show()
+
+
+def calculate_distributions(hypotheses):
+    for h in hypotheses:
+        df = pd.read_csv('dataset.csv')
+        X = df.values
+        y = np.ones(X.shape[0])
+        index = pd.Index([x for x, _ in zip(X[:, h["index"]], y)])
+        df = pd.DataFrame({"Variable": index})
+        
+        # Calculate the basic statistics
+        means = df.groupby(h["index"])["Variable"].agg(['count', 'mean', 'median', 'std', 'min', 'max'])
+        modes = pd.Series(means['Variable'].mode().iloc[0]).reset_index().rename(columns={'level_0': 'Mode'})
+        
+        # Check for normality
+        X = df.to_numeric()[h["index"]] - means.at[0,'mean']
+        gmm = GaussianMixture(n_components=len(np.unique(X)), covariance_type='full').fit(X)
+        loglike = gmm.score(X)
+        chi2, p, dof, expected = chisquared(gmm.weights_)
+        llr_statistic = 2 * sum(loglike) - 2 * sum(np.log(gmm.weights_)) - len(gmm.means_) * (np.log(2) - gamma(0.5) + lgamma(0.5 * len(gmm.means_))))
+        z_norm = abs(((llr_statistic/chi2)**0.5)*erfcinv(p))
+        if abs(z_norm) < 1.96:
+            print(f"\tNormal Distribution Assumption Passed for Index {h['index']}")
+        else:
+            print(f"\tNormal Distribution Assumption Failed for Index {h['index']}, Skewness and Kurtosis will be calculated instead...")
+            
+        # Calculate the moments and coefficients needed for generating skewed normal distributions
+        if abs(z_norm) >= 1.96:
+            continue
+        X -= means.at[0,'mean']
+        X *= 1/(means.at[0,'std'])
+        mu = X.mean()
+        sigma = X.std()
+        nu = 6
+        coef1 = (-0.14697, 1.10377, -0.64805, 0.38299, 0.00101, 0.0)
+coef2 = (-0.10085, 0.58931, 0.13444, -0.03688, 0.00177, -0.000117)
+a, b = optimize.curve_fit(skewnorm.cdf, X, np.zeros(X.shape), bounds=[(-20, 0), (0, 20)]).flatten()
+sigma_kurt = kurtosis(X) - 3
+beta = sigma_kurt / 8
+gamma = beta * ((nu+2)/(nu-2))((nu+2)/2) * (cosh((nunp.pi*(gamma-1))/2)/sinh(np.pi(gamma-1)))((nu-2)/2) * exp(-((nu+2)gamma**2)/2)
+lambda_ = (2beta)/(alphakappagamma)
+if lambda_ == 0:
+# No tail correction necessary
+pass
+elif lambda_ < 0:
+# Shift distribution to avoid negative values of lambda_
+lambda_ = 0
+else:
+# Tail correction using shrinkage method
+C = [1.35, 2.39, 3.46, 4.49, 5.48, 6.48, 7.48, 8.46, 9.44, 10.42]
+D = [1.92, 3.07, 4.23, 5.39, 6.55, 7.70, 8.86, 10.02, 11.18, 12.33]
+j = int(np.floor(np.sqrt(abs(lambda_-C[-1]))))
+rho = (j-1)(C[j-1]/C[j]+(lambda_-C[j-1])/C[j])/(C[j-1]/C[j]-C[j]/C[j+1])
+delta = (lambda_-C[j-1])/C[j]-rho(C[j]/C[j+1])
+w = min(1, max(0, abs(delta)/(C[j]/C[j+1])))
+
+Psi, _, _, _, info = shrinkage(np.identity(X.shape[1]), np.array([np.power(sigma, 2) for i in range(X.shape[1])]))
+Lambda = np.diag(Psi) ** 0.5
+Q, R = linalg.qr(Lambda @ np.transpose(Lambda))
+G = np.dot(Q, np.transpose(R))
+invG = np.linalg.inv(G)
+Beta = np.matmul(invG, lambda_*G@(np.eye(X.shape[1])-np.dot(np.dot(G, np.diagonal(Lambda)), G)@Lambda)) @ gamma
+Scale = np.power(Gamma, 2) * np.exp(Beta.T.dot(mu.reshape(-1, 1))) * sqrtm(R)
+Mu = G@mu
+
+# Generate samples based on skew-normal distribution
+nsamples = 1000
+Xnew = np.empty((nsamples, X.shape[1]))
+for i in tqdm(range(nsamples)):
+    U = np.random.uniform(size=(X.shape[1], 1))
+    V = skewnorm.rvs(scale=Scale, loc=Mu, shape=U.shape, a=a, b=b, gamma=gamma)
+    Xnew[i] = V + mu
+
+# Display results
+print(f"\tMean: {round(Xnew.mean(), 2)}")
+print(f"\tStandard Deviation: {round(Xnew.std(), 2)}")
+print(f"\tSkewness: {round(skew(Xnew), 2)}")
+print(f"\tKurtosis: {round(kurtosis(Xnew), 2)}")
